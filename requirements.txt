@@ -1,0 +1,5 @@
+streamlit
+supabase
+pandas
+opencv-contrib-python
+numpy
