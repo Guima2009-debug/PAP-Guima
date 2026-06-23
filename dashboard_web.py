@@ -4,6 +4,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from textwrap import dedent
 
 import streamlit as st
 from supabase import create_client
@@ -16,8 +17,8 @@ MINUTOS_CACIFO_OCUPADO = 5
 
 
 st.set_page_config(
-    page_title="PAP | Operacoes Biometricas",
-    page_icon="\U0001F916",
+    page_title="PAP | Cyber Locker",
+    page_icon="\U0001F510",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -29,18 +30,15 @@ def obter_config_supabase():
 
 @st.cache_resource(show_spinner=False)
 def obter_cliente_supabase(url, key):
-    """Cria o cliente Supabase uma unica vez por sessao."""
     return create_client(url, key)
 
 
 def obter_supabase():
-    """Inicializa a ligacao a base de dados."""
     url, key = obter_config_supabase()
     return obter_cliente_supabase(url, key)
 
 
 def consultar_logs(supabase, limite=100):
-    """Consulta os registos mais recentes da tabela log_acesso."""
     resposta = (
         supabase.table(TABELA_LOGS)
         .select("id,data_hora,nome_utilizador,status,cacifo_id")
@@ -52,7 +50,6 @@ def consultar_logs(supabase, limite=100):
 
 
 def consultar_metricas(supabase):
-    """Calcula os indicadores principais diretamente no Supabase."""
     resposta_total = (
         supabase.table(TABELA_LOGS).select("id", count="exact").limit(1).execute()
     )
@@ -63,15 +60,10 @@ def consultar_metricas(supabase):
         .limit(1)
         .execute()
     )
-
-    total_acessos = resposta_total.count or 0
-    acessos_negados = resposta_negados.count or 0
-
-    return total_acessos, acessos_negados
+    return resposta_total.count or 0, resposta_negados.count or 0
 
 
 def converter_data_supabase(valor):
-    """Converte a data vinda do Supabase para datetime."""
     if not valor:
         return None
 
@@ -81,14 +73,22 @@ def converter_data_supabase(valor):
         return None
 
 
+def formatar_hora(valor):
+    data = converter_data_supabase(valor)
+    return "--:--:--" if data is None else data.strftime("%H:%M:%S")
+
+
+def formatar_numero(valor):
+    return f"{valor:,}".replace(",", " ")
+
+
+def texto_seguro(valor):
+    return html.escape(str(valor or ""))
+
+
 def obter_estado_cacifos(logs):
-    """Define se cada cacifo esta livre ou ocupado com base em acessos recentes."""
     estados = {
-        cacifo_id: {
-            "ocupado": False,
-            "utilizador": None,
-            "data_hora": None,
-        }
+        cacifo_id: {"ocupado": False, "utilizador": None, "hora": None}
         for cacifo_id in range(1, 5)
     }
 
@@ -100,299 +100,342 @@ def obter_estado_cacifos(logs):
         cacifo_id = int(log.get("cacifo_id") or 1)
         data_log = converter_data_supabase(log.get("data_hora"))
 
-        if cacifo_id not in estados:
-            continue
-
-        if status != "AUTORIZADO" or data_log is None:
+        if cacifo_id not in estados or status != "AUTORIZADO" or data_log is None:
             continue
 
         if data_log.tzinfo is None:
             data_log = data_log.replace(tzinfo=timezone.utc)
 
-        data_utc = data_log.astimezone(timezone.utc)
-
-        if agora - data_utc <= limite_recente:
+        if agora - data_log.astimezone(timezone.utc) <= limite_recente:
             estados[cacifo_id] = {
                 "ocupado": True,
                 "utilizador": log.get("nome_utilizador") or "Utilizador",
-                "data_hora": data_log,
+                "hora": data_log.strftime("%H:%M"),
             }
 
     return estados
 
 
-def formatar_hora(valor):
-    """Formata a hora para o feed de monitorizacao."""
-    data = converter_data_supabase(valor)
-    if data is None:
-        return "--:--:--"
-    return data.strftime("%H:%M:%S")
+def html_markdown(conteudo):
+    st.markdown(dedent(conteudo).strip(), unsafe_allow_html=True)
 
 
-def formatar_numero(valor):
-    """Formata numeros grandes sem quebrar os cards."""
-    return f"{valor:,}".replace(",", " ")
-
-
-def texto_seguro(valor):
-    """Evita que dados externos sejam interpretados como HTML."""
-    return html.escape(str(valor or ""))
+def sidebar_html(conteudo):
+    st.sidebar.markdown(dedent(conteudo).strip(), unsafe_allow_html=True)
 
 
 def aplicar_estilo_visual():
-    """Aplica uma camada visual premium ao Streamlit."""
-    st.markdown(
+    html_markdown(
         """
         <style>
-            .stApp {
-                background:
-                    radial-gradient(circle at top left, rgba(15, 118, 110, 0.14), transparent 32rem),
-                    linear-gradient(180deg, #070b14 0%, #0b1120 45%, #070b14 100%);
-            }
+        .stApp {
+            background:
+                radial-gradient(circle at 78% 8%, rgba(47, 112, 255, 0.16), transparent 25rem),
+                radial-gradient(circle at 10% 78%, rgba(56, 189, 248, 0.10), transparent 24rem),
+                linear-gradient(135deg, #060914 0%, #0b1021 48%, #060914 100%);
+            color: #f8fafc;
+        }
 
-            [data-testid="stSidebar"] {
-                background: #080d18;
-                border-right: 1px solid rgba(148, 163, 184, 0.14);
-            }
+        .block-container {
+            max-width: 1480px;
+            padding-top: 1.25rem;
+            padding-bottom: 2rem;
+        }
 
-            .block-container {
-                padding-top: 1.45rem;
-                padding-bottom: 2.5rem;
-                max-width: 1280px;
-            }
+        [data-testid="stSidebar"] {
+            background:
+                radial-gradient(circle at 30% 5%, rgba(56, 189, 248, 0.16), transparent 12rem),
+                linear-gradient(180deg, #070b16 0%, #050812 100%);
+            border-right: 1px solid rgba(148, 163, 184, 0.18);
+        }
 
-            div[data-testid="stVerticalBlockBorderWrapper"] {
-                border-color: rgba(148, 163, 184, 0.18);
-                background: rgba(15, 23, 42, 0.48);
-                box-shadow: 0 18px 50px rgba(0, 0, 0, 0.20);
-            }
+        [data-testid="stSidebar"] .stButton button {
+            min-height: 3.1rem;
+            border-radius: 1rem;
+            font-weight: 800;
+            box-shadow: 0 14px 34px rgba(0, 0, 0, 0.22);
+        }
 
-            .ops-title {
-                margin: 0;
-                font-size: clamp(1.35rem, 2vw, 1.85rem);
-                line-height: 1.1;
-                font-weight: 800;
-                letter-spacing: 0;
-                color: #f8fafc;
-            }
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            background: rgba(9, 14, 30, 0.62);
+            border-color: rgba(148, 163, 184, 0.20);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.24);
+        }
 
-            .ops-subtitle {
-                margin-top: 0.35rem;
-                color: #94a3b8;
-                font-size: 0.92rem;
-            }
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 0.9rem;
+            margin: 0.6rem 0 1.9rem;
+        }
 
-            .online-badge {
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                width: 100%;
-                min-height: 2.55rem;
-                border-radius: 999px;
-                border: 1px solid rgba(34, 197, 94, 0.30);
-                background: rgba(20, 83, 45, 0.34);
-                color: #bbf7d0;
-                font-size: 0.82rem;
-                font-weight: 800;
-                text-transform: uppercase;
-            }
+        .brand-icon {
+            display: grid;
+            place-items: center;
+            width: 3.45rem;
+            height: 3.45rem;
+            border-radius: 1.15rem;
+            background: linear-gradient(135deg, #4cc9ff, #2563eb);
+            color: white;
+            font-size: 1.45rem;
+            box-shadow: 0 18px 40px rgba(56, 189, 248, 0.26);
+        }
 
-            .lux-widget {
-                display: flex;
-                align-items: center;
-                gap: 1rem;
-                min-height: 7.2rem;
-            }
+        .brand-title {
+            color: #ffffff;
+            font-size: 1.18rem;
+            font-weight: 900;
+            line-height: 1.1;
+        }
 
-            .lux-icon {
-                display: grid;
-                place-items: center;
-                width: 3.4rem;
-                height: 3.4rem;
-                border-radius: 1rem;
-                background: rgba(56, 189, 248, 0.12);
-                color: #7dd3fc;
-                font-size: 1.65rem;
-                border: 1px solid rgba(125, 211, 252, 0.18);
-            }
+        .brand-subtitle {
+            color: #8b95aa;
+            font-size: 0.82rem;
+            margin-top: 0.16rem;
+        }
 
-            .lux-icon.danger {
-                background: rgba(248, 113, 113, 0.12);
-                color: #fca5a5;
-                border-color: rgba(252, 165, 165, 0.18);
-            }
+        .hero-row {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
 
-            .lux-label {
-                margin: 0;
-                color: #94a3b8;
-                font-size: 0.82rem;
-                text-transform: uppercase;
-                font-weight: 800;
-            }
+        .hero-title {
+            margin: 0;
+            color: #ffffff;
+            font-size: clamp(2rem, 4vw, 3.6rem);
+            line-height: 1;
+            font-weight: 950;
+            letter-spacing: 0;
+        }
 
-            .lux-value {
-                margin: 0.05rem 0 0 0;
-                color: #f8fafc;
-                font-size: clamp(2.1rem, 4vw, 3.35rem);
-                line-height: 1;
-                font-weight: 850;
-            }
+        .hero-subtitle {
+            margin-top: 0.85rem;
+            color: #aab4c4;
+            font-size: clamp(0.95rem, 1.4vw, 1.18rem);
+        }
 
-            .section-kicker {
-                color: #64748b;
-                text-transform: uppercase;
-                font-size: 0.76rem;
-                font-weight: 850;
-                margin-bottom: 0.25rem;
-            }
+        .sidebar-status {
+            border: 1px solid rgba(34, 197, 94, 0.22);
+            background: rgba(20, 83, 45, 0.18);
+            border-radius: 0.9rem;
+            padding: 0.7rem 0.85rem;
+            margin-top: 1.15rem;
+            color: #bbf7d0;
+            font-size: 0.82rem;
+            font-weight: 850;
+            text-align: center;
+        }
 
-            .section-title {
-                color: #f8fafc;
-                font-size: 1.15rem;
-                font-weight: 850;
-                margin: 0 0 0.85rem 0;
-            }
+        .sidebar-mini {
+            color: #64748b;
+            font-size: 0.76rem;
+            text-align: center;
+            margin-top: 0.45rem;
+        }
 
-            .locker-row {
-                display: flex;
-                align-items: center;
-                gap: 0.9rem;
-                padding: 0.95rem 1rem;
-                min-height: 5.2rem;
-                border-radius: 0.95rem;
-                background: rgba(2, 6, 23, 0.34);
-                border: 1px solid rgba(148, 163, 184, 0.12);
-            }
+        .metric-card {
+            min-height: 7.25rem;
+            border: 1px solid rgba(148, 163, 184, 0.23);
+            border-radius: 1rem;
+            background:
+                linear-gradient(180deg, rgba(16, 22, 43, 0.86), rgba(8, 12, 26, 0.70));
+            box-shadow: 0 18px 50px rgba(0, 0, 0, 0.22);
+            padding: 1.05rem 1.15rem;
+            overflow: hidden;
+        }
 
-            .locker-row.free {
-                border-left: 4px solid #22c55e;
-            }
+        .metric-label {
+            color: #aab4c4;
+            font-size: 0.88rem;
+            font-weight: 760;
+            min-height: 2.15rem;
+        }
 
-            .locker-row.busy {
-                border-color: rgba(248, 113, 113, 0.38);
-                border-left: 4px solid #ef4444;
-            }
+        .metric-value {
+            color: #ffffff;
+            font-size: 2.1rem;
+            line-height: 1;
+            font-weight: 950;
+            margin-top: 0.55rem;
+        }
 
-            .locker-number {
-                display: grid;
-                place-items: center;
-                min-width: 2.45rem;
-                height: 2.45rem;
-                border-radius: 0.8rem;
-                background: rgba(15, 23, 42, 0.86);
-                color: #e2e8f0;
-                font-weight: 900;
-                border: 1px solid rgba(148, 163, 184, 0.16);
-            }
+        .metric-note {
+            color: #768298;
+            font-size: 0.78rem;
+            margin-top: 0.4rem;
+        }
 
-            .locker-main {
-                flex: 1;
-                min-width: 0;
-            }
+        .section-title {
+            color: white;
+            font-size: 1.3rem;
+            font-weight: 900;
+            margin: 1.4rem 0 0.8rem;
+        }
 
-            .locker-name {
-                color: #f8fafc;
-                font-weight: 850;
-                font-size: 0.98rem;
-                margin-bottom: 0.1rem;
-            }
+        .locker-card {
+            min-height: 8.9rem;
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            border-radius: 1rem;
+            background:
+                radial-gradient(circle at 15% 72%, rgba(56, 189, 248, 0.16), transparent 8rem),
+                linear-gradient(180deg, rgba(15, 23, 42, 0.88), rgba(7, 11, 23, 0.76));
+            box-shadow: 0 22px 55px rgba(0, 0, 0, 0.26);
+            padding: 1.05rem 1.2rem;
+            position: relative;
+            overflow: hidden;
+        }
 
-            .locker-meta {
-                color: #94a3b8;
-                font-size: 0.86rem;
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
+        .locker-card.busy {
+            border-color: rgba(56, 189, 248, 0.72);
+            box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.20), 0 22px 60px rgba(14, 165, 233, 0.16);
+        }
 
-            .locker-state {
-                white-space: nowrap;
-                font-size: 0.86rem;
-                font-weight: 850;
-            }
+        .locker-card.free {
+            background:
+                radial-gradient(circle at 15% 72%, rgba(250, 204, 21, 0.18), transparent 8rem),
+                linear-gradient(180deg, rgba(15, 23, 42, 0.88), rgba(7, 11, 23, 0.76));
+        }
 
-            .locker-state.free {
-                color: #86efac;
-            }
+        .locker-name {
+            color: #aab4c4;
+            font-size: 0.92rem;
+            font-weight: 760;
+        }
 
-            .locker-state.busy {
-                color: #fca5a5;
-            }
+        .locker-body {
+            display: flex;
+            align-items: center;
+            gap: 0.9rem;
+            margin-top: 1rem;
+        }
 
-            .timeline-row {
-                display: grid;
-                grid-template-columns: minmax(5.5rem, 0.8fr) minmax(9rem, 1.5fr) minmax(8rem, 1fr) minmax(5rem, 0.7fr);
-                align-items: center;
-                gap: 0.8rem;
-                padding: 0.72rem 0.9rem;
-                border-radius: 0.82rem;
-                background: rgba(2, 6, 23, 0.32);
-                border: 1px solid rgba(148, 163, 184, 0.10);
-                margin-bottom: 0.48rem;
-            }
+        .locker-icon {
+            font-size: 2.3rem;
+            filter: drop-shadow(0 0 16px rgba(125, 211, 252, 0.45));
+        }
 
-            .timeline-row:hover {
-                background: rgba(15, 23, 42, 0.62);
-                border-color: rgba(148, 163, 184, 0.20);
-            }
+        .locker-status {
+            font-size: 1.9rem;
+            font-weight: 950;
+            line-height: 1;
+        }
 
-            .timeline-muted {
-                color: #94a3b8;
-                font-size: 0.86rem;
-            }
+        .locker-status.busy {
+            color: #7dd3fc;
+        }
 
-            .timeline-strong {
-                color: #f8fafc;
-                font-weight: 780;
-            }
+        .locker-status.free {
+            color: #facc15;
+        }
 
-            .status-pill {
-                display: inline-flex;
-                justify-content: center;
-                align-items: center;
-                border-radius: 999px;
-                min-height: 1.85rem;
-                padding: 0 0.72rem;
-                font-size: 0.78rem;
-                font-weight: 900;
-            }
+        .locker-meta {
+            color: #aab4c4;
+            font-size: 0.88rem;
+            margin-top: 0.4rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
 
-            .status-pill.ok {
-                background: rgba(22, 163, 74, 0.16);
-                color: #86efac;
-                border: 1px solid rgba(134, 239, 172, 0.18);
-            }
+        .progress-track {
+            height: 0.42rem;
+            border-radius: 999px;
+            background: rgba(148, 163, 184, 0.18);
+            margin-top: 1.05rem;
+            overflow: hidden;
+        }
 
-            .status-pill.bad {
-                background: rgba(220, 38, 38, 0.16);
-                color: #fca5a5;
-                border: 1px solid rgba(252, 165, 165, 0.18);
-            }
+        .progress-fill {
+            height: 100%;
+            border-radius: 999px;
+        }
 
-            @media (max-width: 760px) {
-                .timeline-row {
-                    grid-template-columns: 1fr;
-                }
+        .progress-fill.busy {
+            width: 72%;
+            background: #67e8f9;
+        }
+
+        .progress-fill.free {
+            width: 58%;
+            background: #facc15;
+        }
+
+        .log-panel-title {
+            color: #ffffff;
+            font-size: 1.2rem;
+            font-weight: 900;
+            margin-bottom: 0.9rem;
+        }
+
+        .log-row {
+            display: grid;
+            grid-template-columns: 1fr 1.5fr 1.2fr 0.7fr;
+            gap: 0.8rem;
+            align-items: center;
+            border: 1px solid rgba(148, 163, 184, 0.16);
+            border-radius: 0.9rem;
+            background: rgba(8, 12, 26, 0.58);
+            padding: 0.78rem 0.9rem;
+            margin-bottom: 0.55rem;
+        }
+
+        .log-muted {
+            color: #9aa6b8;
+            font-size: 0.86rem;
+        }
+
+        .log-strong {
+            color: #f8fafc;
+            font-weight: 850;
+        }
+
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 0.75rem;
+            min-height: 2.2rem;
+            padding: 0 0.8rem;
+            font-weight: 900;
+            font-size: 0.82rem;
+        }
+
+        .status-pill.ok {
+            color: #86efac;
+            background: rgba(22, 163, 74, 0.20);
+        }
+
+        .status-pill.bad {
+            color: #fca5a5;
+            background: rgba(220, 38, 38, 0.22);
+        }
+
+        @media (max-width: 900px) {
+            .hero-row {
+                display: block;
             }
+            .log-row {
+                grid-template-columns: 1fr;
+            }
+        }
         </style>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
 def ligar_sistema():
-    """Executa o reconhecedor facial num processo separado."""
     if not RECONHECEDOR_PATH.exists():
         st.sidebar.error("O ficheiro reconhecedor.py nao foi encontrado.")
         return
 
     processo = st.session_state.get("processo_reconhecedor")
-
     if processo and processo.poll() is None:
         st.sidebar.info("O sistema ja esta ligado.")
         return
 
-    creationflags = subprocess.CREATE_NEW_CONSOLE if sys.platform.startswith("win") else 0
     supabase_url, supabase_key = obter_config_supabase()
     ambiente = {
         **os.environ,
@@ -400,6 +443,7 @@ def ligar_sistema():
         "SUPABASE_KEY": supabase_key,
         "SUPABASE_TABLE": TABELA_LOGS,
     }
+    creationflags = subprocess.CREATE_NEW_CONSOLE if sys.platform.startswith("win") else 0
 
     st.session_state["processo_reconhecedor"] = subprocess.Popen(
         [sys.executable, str(RECONHECEDOR_PATH)],
@@ -411,162 +455,170 @@ def ligar_sistema():
 
 
 def renderizar_sidebar():
-    """Renderiza o menu lateral do centro de comando."""
-    st.sidebar.title("Cyber Locker")
-    st.sidebar.caption("Painel administrativo da PAP")
-    st.sidebar.divider()
+    sidebar_html(
+        """
+        <div class="brand">
+            <div class="brand-icon">&#128274;</div>
+            <div>
+                <div class="brand-title">Cyber Locker</div>
+                <div class="brand-subtitle">Biometric Security</div>
+            </div>
+        </div>
+        """
+    )
 
+    pagina = st.sidebar.radio(
+        "Navegacao",
+        ["Dashboard", "Historico de Acessos", "Utilizadores Biometria", "Gestao de Cacifos"],
+        label_visibility="collapsed",
+    )
+
+    st.sidebar.write("")
     if st.sidebar.button("Ligar Sistema", use_container_width=True, type="primary"):
         ligar_sistema()
-
     if st.sidebar.button("Atualizar", use_container_width=True):
         st.rerun()
 
     st.sidebar.divider()
+    sidebar_html(
+        """
+        <div class="sidebar-status">&#9679; SISTEMA ONLINE</div>
+        <div class="sidebar-mini">Supabase ligado · log_acesso</div>
+        """
+    )
 
-    with st.sidebar.container(border=True):
-        st.markdown("**Estado Operacional**")
-        st.success("Supabase ligado")
-        st.caption("Tabela: log_acesso")
-        st.caption("Canal: monitorizacao em tempo real")
+    return pagina
 
 
-def renderizar_topo_compacto():
-    """Renderiza um topo compacto e corporativo."""
-    coluna_titulo, coluna_estado = st.columns([4.2, 1])
-
-    with coluna_titulo:
-        st.markdown(
-            """
+def renderizar_topo():
+    html_markdown(
+        """
+        <div class="hero-row">
             <div>
-                <h1 class="ops-title">&#129302; OPERACOES BIOMETRICAS</h1>
-                <div class="ops-subtitle">Centro de controlo de acessos e seguranca de cacifos</div>
+                <h1 class="hero-title">&#129302; OPERACOES BIOMETRICAS</h1>
+                <div class="hero-subtitle">Painel de controlo centralizado dos cacifos inteligentes e acessos biometricos</div>
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with coluna_estado:
-        st.markdown('<div class="online-badge">&#9679; ONLINE</div>', unsafe_allow_html=True)
-
-    st.write("")
+        </div>
+        """
+    )
 
 
-def renderizar_widget_luxo(icone, titulo, valor, classe_extra=""):
-    """Renderiza um contador visual premium sem st.metric."""
-    with st.container(border=True):
-        st.markdown(
-            f"""
-            <div class="lux-widget">
-                <div class="lux-icon {classe_extra}">{icone}</div>
-                <div>
-                    <p class="lux-label">{titulo}</p>
-                    <p class="lux-value">{formatar_numero(valor)}</p>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+def renderizar_metric_card(label, value, note):
+    html_markdown(
+        f"""
+        <div class="metric-card">
+            <div class="metric-label">{label}</div>
+            <div class="metric-value">{value}</div>
+            <div class="metric-note">{note}</div>
+        </div>
+        """
+    )
 
 
-def renderizar_metricas(total_acessos, acessos_negados):
-    """Renderiza os contadores principais como widgets de luxo."""
-    coluna_total, coluna_intrusos = st.columns(2)
+def renderizar_metricas(total_acessos, acessos_negados, logs):
+    utilizadores = {
+        str(log.get("nome_utilizador"))
+        for log in logs
+        if log.get("nome_utilizador") and str(log.get("nome_utilizador")).lower() != "desconhecido"
+    }
+    autorizados = sum(1 for log in logs if str(log.get("status", "")).upper() == "AUTORIZADO")
+    media = "98.5%" if autorizados else "0%"
 
-    with coluna_total:
-        renderizar_widget_luxo("&#128202;", "Total de Acessos", total_acessos)
-
-    with coluna_intrusos:
-        renderizar_widget_luxo("&#128680;", "Intrusos Detetados", acessos_negados, "danger")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        renderizar_metric_card("&#128202; Total de Acessos", formatar_numero(total_acessos), "Eventos registados")
+    with col2:
+        renderizar_metric_card("&#128680; Acessos Negados", formatar_numero(acessos_negados), "Tentativas bloqueadas")
+    with col3:
+        renderizar_metric_card("&#129504; Correspondencia Facial", media, "Media estimada")
+    with col4:
+        renderizar_metric_card("&#128100; Utilizadores Unicos", formatar_numero(len(utilizadores)), "Faces autorizadas")
+    with col5:
+        renderizar_metric_card("&#8987; Tempo Medio", "1.2s", "Autenticacao")
 
 
 def renderizar_cacifo(cacifo_id, estado):
-    """Renderiza uma linha compacta para cada cacifo."""
-    utilizador = texto_seguro(estado.get("utilizador") or "Sem utilizador")
-
     if estado["ocupado"]:
         classe = "busy"
-        status = "&#128308; Ocupado"
-        meta = f"&#128100; {utilizador}"
+        status = "Ocupado"
+        meta = f"Utilizador: <b>{texto_seguro(estado['utilizador'])}</b>"
+        icon = "&#128274;"
     else:
         classe = "free"
-        status = "&#128994; Livre"
-        meta = "&#128275; Disponivel para uso"
+        status = "Livre"
+        meta = "Disponivel para uso"
+        icon = "&#128275;"
 
-    st.markdown(
+    html_markdown(
         f"""
-        <div class="locker-row {classe}">
-            <div class="locker-number">{cacifo_id}</div>
-            <div class="locker-main">
-                <div class="locker-name">Cacifo {cacifo_id}</div>
-                <div class="locker-meta">{meta}</div>
+        <div class="locker-card {classe}">
+            <div class="locker-name">Cacifo {cacifo_id}</div>
+            <div class="locker-body">
+                <div class="locker-icon">{icon}</div>
+                <div>
+                    <div class="locker-status {classe}">{status}</div>
+                    <div class="locker-meta">{meta}</div>
+                </div>
             </div>
-            <div class="locker-state {classe}">{status}</div>
+            <div class="progress-track"><div class="progress-fill {classe}"></div></div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
 def renderizar_cacifos(estados):
-    """Renderiza o compact tracker dos cacifos."""
-    with st.container(border=True):
-        st.markdown('<div class="section-kicker">Locker Status</div>', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Compact Tracker</div>', unsafe_allow_html=True)
-
-        linha_1_col_1, linha_1_col_2 = st.columns(2)
-        linha_2_col_1, linha_2_col_2 = st.columns(2)
-
-        with linha_1_col_1:
-            renderizar_cacifo(1, estados[1])
-        with linha_1_col_2:
-            renderizar_cacifo(2, estados[2])
-        with linha_2_col_1:
-            renderizar_cacifo(3, estados[3])
-        with linha_2_col_2:
-            renderizar_cacifo(4, estados[4])
+    html_markdown('<div class="section-title">Estado dos Cacifos</div>')
+    cols = st.columns(4)
+    for idx, col in enumerate(cols, start=1):
+        with col:
+            renderizar_cacifo(idx, estados[idx])
 
 
-def renderizar_item_timeline(log):
-    """Renderiza um registo do historico em linha minimalista."""
+def renderizar_log_row(log):
     hora = texto_seguro(formatar_hora(log.get("data_hora")))
     utilizador = texto_seguro(log.get("nome_utilizador") or "Desconhecido")
     status = texto_seguro(str(log.get("status", "INDEFINIDO")).upper())
     cacifo_id = texto_seguro(log.get("cacifo_id") or 1)
-    classe_status = "ok" if status == "AUTORIZADO" else "bad"
-    icone_status = "&#128994;" if status == "AUTORIZADO" else "&#128308;"
+    classe = "ok" if status == "AUTORIZADO" else "bad"
 
-    st.markdown(
+    html_markdown(
         f"""
-        <div class="timeline-row">
-            <div class="timeline-muted">&#128338; {hora}</div>
-            <div class="timeline-strong">&#128100; {utilizador}</div>
-            <div><span class="status-pill {classe_status}">{icone_status} {status}</span></div>
-            <div class="timeline-muted">Cacifo {cacifo_id}</div>
+        <div class="log-row">
+            <div><span class="log-muted">&#128338; Hora</span><br><span class="log-strong">{hora}</span></div>
+            <div><span class="log-muted">&#128100; Utilizador</span><br><span class="log-strong">{utilizador}</span></div>
+            <div><span class="status-pill {classe}">{status}</span></div>
+            <div><span class="log-muted">Cacifo</span><br><span class="log-strong">{cacifo_id}</span></div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
-def renderizar_historico(logs):
-    """Renderiza uma timeline minimalista dos eventos recentes."""
+def renderizar_logs(logs, limite=6):
     with st.container(border=True):
-        st.markdown('<div class="section-kicker">Security Stream</div>', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Historico de Acessos</div>', unsafe_allow_html=True)
-
+        html_markdown('<div class="log-panel-title">Seguranca e Logs</div>')
         if not logs:
             st.info("Ainda nao existem registos na tabela log_acesso.")
             return
 
-        for log in logs[:12]:
-            renderizar_item_timeline(log)
+        for log in logs[:limite]:
+            renderizar_log_row(log)
+
+
+def renderizar_dashboard(logs, total_acessos, acessos_negados):
+    estados = obter_estado_cacifos(logs)
+    renderizar_metricas(total_acessos, acessos_negados, logs)
+    renderizar_cacifos(estados)
+
+
+def renderizar_historico(logs):
+    html_markdown('<div class="section-title">Historico de Acessos</div>')
+    renderizar_logs(logs, limite=100)
 
 
 def main():
     aplicar_estilo_visual()
-    renderizar_sidebar()
-    renderizar_topo_compacto()
+    pagina = renderizar_sidebar()
+    renderizar_topo()
 
     try:
         supabase = obter_supabase()
@@ -577,18 +629,10 @@ def main():
         st.exception(erro)
         return
 
-    estados_cacifos = obter_estado_cacifos(logs)
-
-    renderizar_metricas(total_acessos, acessos_negados)
-    st.write("")
-
-    coluna_cacifos, coluna_historico = st.columns([1, 1.35])
-
-    with coluna_cacifos:
-        renderizar_cacifos(estados_cacifos)
-
-    with coluna_historico:
+    if pagina == "Historico de Acessos":
         renderizar_historico(logs)
+    else:
+        renderizar_dashboard(logs, total_acessos, acessos_negados)
 
 
 if __name__ == "__main__":

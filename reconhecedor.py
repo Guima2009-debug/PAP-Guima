@@ -6,7 +6,6 @@ import cv2
 import numpy as np
 from supabase import create_client
 
-
 BASE_DIR = Path(__file__).resolve().parent
 PASTA_TREINO = BASE_DIR / "fotos_treino"
 TABELA_ACESSOS = os.getenv("SUPABASE_TABLE", "acessos")
@@ -72,7 +71,10 @@ def main():
     print("Treino concluido com sucesso!")
 
     nomes = {1: "Rodrigo", 2: "Desconhecido"}
-    ultimo_registo = ""
+    
+    # Variaveis de controlo inteligentes para evitar spam na base de dados
+    ultimo_registo_tempo = None
+    ultimo_status = ""
 
     webcam = cv2.VideoCapture(0)
 
@@ -103,31 +105,24 @@ def main():
                 texto_status = "Acesso Negado!"
                 status = "NEGADO"
 
+            # Desenha o quadrado e os textos na tela da camera
             cv2.rectangle(frame, (x, y), (x + largura, y + altura), cor_quadrado, 2)
-            cv2.putText(
-                frame,
-                nome_utilizador,
-                (x, y - 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                cor_quadrado,
-                2,
-            )
-            cv2.putText(
-                frame,
-                texto_status,
-                (x, y - 10),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                cor_quadrado,
-                1,
-            )
+            cv2.putText(frame, nome_utilizador, (x, y - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, cor_quadrado, 2)
+            cv2.putText(frame, texto_status, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, cor_quadrado, 1)
 
             agora = datetime.now()
-            minuto_atual = agora.strftime("%d/%m/%Y %H:%M")
+            
+            # LOGICA DE ENVIO SEGURO:
+            # 1. Se for o primeiro registo do dia -> Grava.
+            # 2. Se o estado mudou (ex: era NEGADO e agora e AUTORIZADO) -> Grava logo!
+            # 3. Se for o mesmo estado, só deixa gravar se já passarem mais de 5 segundos.
+            deve_gravar = False
+            if ultimo_registo_tempo is None or status != ultimo_status:
+                deve_gravar = True
+            elif (agora - ultimo_registo_tempo).total_seconds() > 5:
+                deve_gravar = True
 
-            # Evita inserir varias linhas seguidas para a mesma deteccao.
-            if minuto_atual != ultimo_registo:
+            if deve_gravar:
                 try:
                     registar_acesso_supabase(
                         supabase=supabase,
@@ -135,7 +130,8 @@ def main():
                         status=status,
                         cacifo_id=CACIFO_ID,
                     )
-                    ultimo_registo = minuto_atual
+                    ultimo_registo_tempo = agora
+                    ultimo_status = status
                     print(f"[LOG SUPABASE]: {nome_utilizador} -> {status}")
                 except Exception as erro:
                     print(f"[ERRO SUPABASE]: Nao foi possivel guardar o log: {erro}")
