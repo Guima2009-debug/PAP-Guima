@@ -8,8 +8,8 @@ from supabase import create_client
 
 BASE_DIR = Path(__file__).resolve().parent
 PASTA_TREINO = BASE_DIR / "fotos_treino"
-TABELA_ACESSOS = os.getenv("SUPABASE_TABLE", "acessos")
-CACIFO_ID = int(os.getenv("CACIFO_ID", "1"))
+TABELA_ACESSOS = os.getenv("SUPABASE_TABLE", "log_acesso") # Usar log_acesso como vimos
+CACIFO_ID = int(os.getenv("CACIFO_ID", "1")) # Qual cacifo esta camera controla por defeito
 
 
 def criar_cliente_supabase():
@@ -70,7 +70,14 @@ def main():
     reconhecedor.train(rostos, ids)
     print("Treino concluido com sucesso!")
 
-    nomes = {1: "Rodrigo", 2: "Desconhecido"}
+    # =========================================================================
+    # ATENÇÃO: Atualiza aqui os nomes para as pessoas reais!
+    # =========================================================================
+    nomes = {
+        1: "Rodrigo",  # ID 1 -> Cacifo 1
+        2: "Afonso",  # ID 2 -> Cacifo 2 (Muda "Pessoa2" para o nome real)
+        3: "Desconhecido"
+    }
     
     # Variaveis de controlo inteligentes para evitar spam na base de dados
     ultimo_registo_tempo = None
@@ -95,27 +102,32 @@ def main():
             id_previsto, confianca = reconhecedor.predict(rosto_recortado)
 
             if confianca < 60:
-                nome_utilizador = nomes.get(id_previsto, "Desconhecido")
-                cor_quadrado = (0, 255, 0)
+                nome_base = nomes.get(id_previsto, "Desconhecido")
+                
+                # LOGICA DINAMICA DE TEXTO NA TELA:
+                # Mostra o ID previsto como o numero do cacifo
+                if nome_base != "Desconhecido":
+                    nome_utilizador = f"{nome_base} (Cacifo {id_previsto})"
+                else:
+                    nome_utilizador = nome_base
+                
+                cor_quadrado = (0, 255, 0) # Verde
                 texto_status = f"Acesso Autorizado: {confianca:.1f}%"
                 status = "AUTORIZADO"
             else:
                 nome_utilizador = "Desconhecido"
-                cor_quadrado = (0, 0, 255)
+                cor_quadrado = (0, 0, 255) # Vermelho
                 texto_status = "Acesso Negado!"
                 status = "NEGADO"
 
             # Desenha o quadrado e os textos na tela da camera
             cv2.rectangle(frame, (x, y), (x + largura, y + altura), cor_quadrado, 2)
-            cv2.putText(frame, nome_utilizador, (x, y - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, cor_quadrado, 2)
+            cv2.putText(frame, nome_utilizador, (x, y - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, cor_quadrado, 2)
             cv2.putText(frame, texto_status, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, cor_quadrado, 1)
 
             agora = datetime.now()
             
-            # LOGICA DE ENVIO SEGURO:
-            # 1. Se for o primeiro registo do dia -> Grava.
-            # 2. Se o estado mudou (ex: era NEGADO e agora e AUTORIZADO) -> Grava logo!
-            # 3. Se for o mesmo estado, só deixa gravar se já passarem mais de 5 segundos.
+            # LOGICA DE ENVIO SEGURO (INTELIGENTE):
             deve_gravar = False
             if ultimo_registo_tempo is None or status != ultimo_status:
                 deve_gravar = True
@@ -124,15 +136,24 @@ def main():
 
             if deve_gravar:
                 try:
+                    # Envia o nome limpo (sem o texto do cacifo) para a base de dados ficar organizada
+                    nome_para_banco = nomes.get(id_previsto, "Desconhecido") if status == "AUTORIZADO" else "Desconhecido"
+                    
+                    # =========================================================================
+                    # LOGICA DINAMICA DE ENVIO PARA O SUPABASE:
+                    # Se for autorizado, o cacifo_id passa a ser o proprio ID da pessoa (1 ou 2)
+                    # =========================================================================
+                    cacifo_dinamico = id_previsto if status == "AUTORIZADO" else CACIFO_ID
+                    
                     registar_acesso_supabase(
                         supabase=supabase,
-                        nome_utilizador=nome_utilizador,
+                        nome_utilizador=nome_para_banco,
                         status=status,
-                        cacifo_id=CACIFO_ID,
+                        cacifo_id=cacifo_dinamico, # Envia o cacifo correto!
                     )
                     ultimo_registo_tempo = agora
                     ultimo_status = status
-                    print(f"[LOG SUPABASE]: {nome_utilizador} -> {status}")
+                    print(f"[LOG SUPABASE]: {nome_para_banco} -> {status} no Cacifo {cacifo_dinamico}")
                 except Exception as erro:
                     print(f"[ERRO SUPABASE]: Nao foi possivel guardar o log: {erro}")
 

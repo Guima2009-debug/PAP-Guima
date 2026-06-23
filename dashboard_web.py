@@ -91,6 +91,7 @@ def obter_estado_cacifos(logs):
         cacifo_id: {"ocupado": False, "utilizador": None, "hora": None}
         for cacifo_id in range(1, 5)
     }
+    cacifos_processados = set()
 
     agora = datetime.now(timezone.utc)
     limite_recente = timedelta(minutes=MINUTOS_CACIFO_OCUPADO)
@@ -100,7 +101,14 @@ def obter_estado_cacifos(logs):
         cacifo_id = int(log.get("cacifo_id") or 1)
         data_log = converter_data_supabase(log.get("data_hora"))
 
-        if cacifo_id not in estados or status != "AUTORIZADO" or data_log is None:
+        if cacifo_id not in estados or cacifo_id in cacifos_processados:
+            continue
+
+        if status in {"LIBERADO", "LIVRE"}:
+            cacifos_processados.add(cacifo_id)
+            continue
+
+        if status != "AUTORIZADO" or data_log is None:
             continue
 
         if data_log.tzinfo is None:
@@ -113,7 +121,20 @@ def obter_estado_cacifos(logs):
                 "hora": data_log.strftime("%H:%M"),
             }
 
+        cacifos_processados.add(cacifo_id)
+
     return estados
+
+
+def libertar_cacifo(supabase, cacifo_id):
+    supabase.table(TABELA_LOGS).insert(
+        {
+            "data_hora": datetime.now().isoformat(),  # Carimbo de tempo adicionado aqui!
+            "nome_utilizador": "Administrador (Reset)",
+            "status": "LIBERADO",
+            "cacifo_id": cacifo_id,
+        }
+    ).execute()
 
 
 def html_markdown(conteudo):
@@ -413,6 +434,11 @@ def aplicar_estilo_visual():
             background: rgba(220, 38, 38, 0.22);
         }
 
+        .status-pill.free {
+            color: #7dd3fc;
+            background: rgba(14, 165, 233, 0.18);
+        }
+
         @media (max-width: 900px) {
             .hero-row {
                 display: block;
@@ -579,7 +605,12 @@ def renderizar_log_row(log):
     utilizador = texto_seguro(log.get("nome_utilizador") or "Desconhecido")
     status = texto_seguro(str(log.get("status", "INDEFINIDO")).upper())
     cacifo_id = texto_seguro(log.get("cacifo_id") or 1)
-    classe = "ok" if status == "AUTORIZADO" else "bad"
+    if status == "AUTORIZADO":
+        classe = "ok"
+    elif status in {"LIBERADO", "LIVRE"}:
+        classe = "free"
+    else:
+        classe = "bad"
 
     html_markdown(
         f"""
@@ -615,6 +646,42 @@ def renderizar_historico(logs):
     renderizar_logs(logs, limite=100)
 
 
+def renderizar_gestao_cacifos(supabase, logs):
+    estados = obter_estado_cacifos(logs)
+
+    html_markdown('<div class="section-title">Gestao de Cacifos</div>')
+    st.caption("Area administrativa para libertacao manual de cacifos ocupados.")
+
+    cols = st.columns(4)
+    for cacifo_id, col in enumerate(cols, start=1):
+        estado = estados[cacifo_id]
+
+        with col:
+            renderizar_cacifo(cacifo_id, estado)
+
+            if estado["ocupado"]:
+                if st.button(
+                    "\U0001F513 Libertar Cacifo",
+                    key=f"libertar_cacifo_{cacifo_id}",
+                    use_container_width=True,
+                    type="primary",
+                ):
+                    try:
+                        libertar_cacifo(supabase, cacifo_id)
+                        st.success(f"Cacifo {cacifo_id} libertado com sucesso.")
+                        st.rerun()
+                    except Exception as erro:
+                        st.error("Nao foi possivel libertar o cacifo.")
+                        st.exception(erro)
+            else:
+                st.button(
+                    "Cacifo Livre",
+                    key=f"cacifo_livre_{cacifo_id}",
+                    use_container_width=True,
+                    disabled=True,
+                )
+
+
 def main():
     aplicar_estilo_visual()
     pagina = renderizar_sidebar()
@@ -631,6 +698,8 @@ def main():
 
     if pagina == "Historico de Acessos":
         renderizar_historico(logs)
+    elif pagina == "Gestao de Cacifos":
+        renderizar_gestao_cacifos(supabase, logs)
     else:
         renderizar_dashboard(logs, total_acessos, acessos_negados)
 
